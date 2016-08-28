@@ -69,6 +69,13 @@ import cpw.mods.fml.common.versioning.ArtifactVersion;
 import cpw.mods.fml.common.versioning.DefaultArtifactVersion;
 import cpw.mods.fml.common.versioning.VersionParser;
 import cpw.mods.fml.common.versioning.VersionRange;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.logging.Logger;
 
 public class FMLModContainer implements ModContainer
 {
@@ -143,11 +150,56 @@ public class FMLModContainer implements ModContainer
     {
         return modMetadata;
     }
-
+    
+    private byte[] getFileData(String name) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        FileInputStream fin = new FileInputStream(getSource());
+        BufferedInputStream bin = new BufferedInputStream(fin);
+        ZipInputStream zin = new ZipInputStream(bin);
+        ZipEntry ze = null;
+        while ((ze = zin.getNextEntry()) != null) {
+            if (ze.getName().equals(name)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = zin.read(buffer)) != -1) {
+                    out.write(buffer, 0, len);
+                }
+                out.close();
+                break;
+            }
+        }
+        return out.toByteArray();
+    }
+    
+    // TODO MAKE THIS BETTER
+    //static ArrayList<File> patchInjects = new ArrayList<File>();
+    
     @Override
     public void bindMetadata(MetadataCollection mc)
     {
         modMetadata = mc.getMetadataForId(getModId(), descriptor);
+        boolean addedInject = false;
+        for(String mod : mc.metadatas.keySet()){
+            ModMetadata md = mc.metadatas.get(mod);
+            if(!md.forceOverrideClasses.isEmpty()){
+                Iterator<String> i = md.forceOverrideClasses.iterator();
+                while(i.hasNext()){
+                    String oc = i.next();
+                    try {
+                        if(!addedInject){
+                            addedInject = true;
+                            //patchInjects.add(source);
+                            ModClassLoader.registerOverrideArchive(getSource());
+                        }
+                        
+                        ModClassLoader.registerOverride(oc, getFileData(oc));
+                    } catch (IOException ex) {
+                        Logger.getLogger(FMLModContainer.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+                break;
+            }
+        }
 
         if (descriptor.containsKey("useMetadata"))
         {
@@ -415,6 +467,7 @@ public class FMLModContainer implements ModContainer
         {
             ModClassLoader modClassLoader = event.getModClassLoader();
             modClassLoader.addFile(source);
+            
             Class<?> clazz = Class.forName(className, true, modClassLoader);
 
             Certificate[] certificates = clazz.getProtectionDomain().getCodeSource().getCertificates();
@@ -457,10 +510,10 @@ public class FMLModContainer implements ModContainer
             annotations = gatherAnnotations(clazz);
             isNetworkMod = FMLNetworkHandler.instance().registerNetworkMod(this, clazz, event.getASMHarvestedData());
             modInstance = clazz.newInstance();
-            if (fingerprintNotPresent)
-            {
-                eventBus.post(new FMLFingerprintViolationEvent(source.isDirectory(), source, ImmutableSet.copyOf(this.sourceFingerprints), expectedFingerprint));
-            }
+//            if (fingerprintNotPresent)
+//            {
+//                eventBus.post(new FMLFingerprintViolationEvent(source.isDirectory(), source, ImmutableSet.copyOf(this.sourceFingerprints), expectedFingerprint));
+//            }
             ProxyInjector.inject(this, event.getASMHarvestedData(), FMLCommonHandler.instance().getSide());
             processFieldAnnotations(event.getASMHarvestedData());
         }

@@ -16,7 +16,7 @@ import com.google.common.collect.Maps;
 public class MetadataCollection
 {
     private static JdomParser parser = new JdomParser();
-    private Map<String, ModMetadata> metadatas = Maps.newHashMap();
+    public Map<String, ModMetadata> metadatas = Maps.newHashMap();
     private int metadataVersion = 1;
 
     public static MetadataCollection from(InputStream inputStream, String sourceName)

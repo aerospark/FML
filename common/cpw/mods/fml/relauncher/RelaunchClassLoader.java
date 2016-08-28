@@ -26,6 +26,10 @@ import java.util.jar.Manifest;
 import java.util.logging.Level;
 
 import cpw.mods.fml.common.FMLLog;
+import cpw.mods.fml.common.GDiffPatcher;
+import java.io.File;
+import java.net.MalformedURLException;
+import java.util.logging.Logger;
 
 public class RelaunchClassLoader extends URLClassLoader
 {
@@ -46,6 +50,22 @@ public class RelaunchClassLoader extends URLClassLoader
 
     private static final boolean DEBUG_CLASSLOADING = Boolean.parseBoolean(System.getProperty("fml.debugClassLoading", "false"));
 
+    private static final HashMap<String, byte[]> overrides = new HashMap<String, byte[]>();
+    
+    // todo make this less dumb
+    static int index = 0;
+    int thisindex = 0;
+    static File[] overridearchs = new File[128];
+    
+    public static void registerOverrideArchive(File archive){
+        overridearchs[index] = archive;
+        index = (index+1)%128;// todo make this less dumb
+    }
+    
+    public static void registerOverride(String name, byte[] data){
+        overrides.put(name, data);
+    }
+    
     public RelaunchClassLoader(URL[] sources)
     {
         super(sources, null);
@@ -84,6 +104,16 @@ public class RelaunchClassLoader extends URLClassLoader
     @Override
     public Class<?> findClass(String name) throws ClassNotFoundException
     {
+        if(thisindex < index){
+            while(thisindex < index){
+                try {
+                    addURL(overridearchs[thisindex].toURI().toURL());
+                } catch (MalformedURLException ex) {
+                    Logger.getLogger(RelaunchClassLoader.class.getName()).log(Level.SEVERE, null, ex);
+                }
+                thisindex++;
+            }
+        }
         if (invalidClasses.contains(name))
         {
             throw new ClassNotFoundException(name);
@@ -129,32 +159,38 @@ public class RelaunchClassLoader extends URLClassLoader
             URLConnection urlConnection = findCodeSourceConnectionFor(fName);
             if (urlConnection instanceof JarURLConnection && lastDot > -1)
             {
-                JarURLConnection jarUrlConn = (JarURLConnection)urlConnection;
-                JarFile jf = jarUrlConn.getJarFile();
-                if (jf != null && jf.getManifest() != null)
+                Package pkg = getPackage(pkgname);
+                if (pkg == null)
                 {
-                    Manifest mf = jf.getManifest();
-                    JarEntry ent = jf.getJarEntry(fName);
-                    Package pkg = getPackage(pkgname);
-                    getClassBytes(name);
-                    signers = ent.getCodeSigners();
-                    if (pkg == null)
-                    {
-                        pkg = definePackage(pkgname, mf, jarUrlConn.getJarFileURL());
-                        packageManifests.put(pkg, mf);
-                    }
-                    else
-                    {
-                        if (pkg.isSealed() && !pkg.isSealed(jarUrlConn.getJarFileURL()))
-                        {
-                            FMLLog.severe("The jar file %s is trying to seal already secured path %s", jf.getName(), pkgname);
-                        }
-                        else if (isSealed(pkgname, mf))
-                        {
-                            FMLLog.severe("The jar file %s has a security seal for path %s, but that path is defined and not secure", jf.getName(), pkgname);
-                        }
-                    }
+                    pkg = definePackage(pkgname, null, null, null, null, null, null, null);
+                    packageManifests.put(pkg, EMPTY);
                 }
+//                JarURLConnection jarUrlConn = (JarURLConnection)urlConnection;
+//                JarFile jf = jarUrlConn.getJarFile();
+//                if (jf != null && jf.getManifest() != null)
+//                {
+//                    Manifest mf = jf.getManifest();
+//                    JarEntry ent = jf.getJarEntry(fName);
+//                    Package pkg = getPackage(pkgname);
+//                    getClassBytes(name);
+//                    signers = ent.getCodeSigners();
+//                    if (pkg == null)
+//                    {
+//                        pkg = definePackage(pkgname, mf, jarUrlConn.getJarFileURL());
+//                        packageManifests.put(pkg, mf);
+//                    }
+//                    else
+//                    {
+//                        if (pkg.isSealed() && !pkg.isSealed(jarUrlConn.getJarFileURL()))
+//                        {
+//                            FMLLog.severe("The jar file %s is trying to seal already secured path %s", jf.getName(), pkgname);
+//                        }
+//                        else if (isSealed(pkgname, mf))
+//                        {
+//                            FMLLog.severe("The jar file %s has a security seal for path %s, but that path is defined and not secure", jf.getName(), pkgname);
+//                        }
+//                    }
+//                }
             }
             else if (lastDot > -1)
             {
@@ -169,7 +205,12 @@ public class RelaunchClassLoader extends URLClassLoader
                     FMLLog.severe("The URL %s is defining elements for sealed path %s", urlConnection.getURL(), pkgname);
                 }
             }
+            System.out.println("Loading class: " + name);
             byte[] basicClass = getClassBytes(name);
+            if(overrides.containsKey(name)){
+                System.out.println("Patching class: " + name);
+                basicClass = new GDiffPatcher().patch(basicClass, overrides.get(name));
+            }
             byte[] transformedClass = runTransformers(name, basicClass);
             Class<?> cl = defineClass(name, transformedClass, 0, transformedClass.length, new CodeSource(urlConnection.getURL(), signers));
             cachedClasses.put(name, cl);
